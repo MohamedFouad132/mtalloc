@@ -80,10 +80,11 @@ static bool populate_free_list(size_t class_index){
     ChunkLabel* label = reinterpret_cast<ChunkLabel*>(chunk);
     label->size_class = class_index;
     label->length = CHUNK_SIZE;
-
-    char* start = chunk + sizeof(ChunkLabel);
-    char* end = chunk + CHUNK_SIZE;
+    
     size_t slot_size = SIZE_CLASSES[class_index];
+    size_t offset = std::has_single_bit(slot_size) ? slot_size : sizeof(ChunkLabel);
+    char* start = chunk + offset;
+    char* end = chunk + CHUNK_SIZE;
     size_t number_of_blocks = static_cast<size_t>(end - start) / slot_size;
 
     char* curr = start;
