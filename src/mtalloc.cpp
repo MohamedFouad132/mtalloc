@@ -1,10 +1,12 @@
 #include <sys/mman.h>   // mmap, munmap
 
+
 #include <cstddef>      // size_t
 #include <cstdint>      // uintptr_t
 #include <cstdlib>      // official declarations to check our signatures
 #include <cstring>      // memset, memcpy
 #include <limits>       // std::numeric_limits
+#include <bit>          // std::has_single_bit
 
 constexpr size_t PAGE_SIZE = 4 * 1024; // 4 KiB
 constexpr size_t CHUNK_SIZE = 64 * 1024; // 64 KiB
