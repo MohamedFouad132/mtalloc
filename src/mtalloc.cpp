@@ -6,8 +6,10 @@
 #include <cstdlib>      // official declarations to check our signatures
 #include <cstring>      // memset, memcpy
 #include <limits>       // std::numeric_limits
+#include <mutex>        // std::mutex, std::lock_guard
 
 #include <malloc.h>     // malloc_usable_size, memalign, pvalloc
+#include <pthread.h>    // pthread_atfork
 #include <sys/mman.h>   // mmap, munmap
 
 constexpr size_t MIN_ALIGNMENT = 16;
@@ -36,6 +38,24 @@ struct FreeSlot {
 };
 
 static FreeSlot* free_lists[NUM_CLASSES];
+static std::mutex class_locks[NUM_CLASSES];
+
+static void lock_all_classes() {
+    for (std::mutex& lock : class_locks) {
+        lock.lock();
+    }
+}
+
+static void unlock_all_classes() {
+    for (std::mutex& lock : class_locks) {
+        lock.unlock();
+    }
+}
+
+__attribute__((constructor))
+static void fork_handlers() {
+    pthread_atfork(lock_all_classes, unlock_all_classes, unlock_all_classes);
+}
 
 static size_t size_to_class(size_t size) {
     for (size_t class_index = 0; class_index < NUM_CLASSES; class_index++) {
@@ -176,6 +196,7 @@ void* malloc(size_t size) noexcept {
         return malloc_large(size, sizeof(ChunkLabel));
     }
 
+    std::lock_guard<std::mutex> guard{class_locks[class_index]};
     if (free_lists[class_index] == nullptr) {
         if (!populate_free_list(class_index)) {
             return nullptr;
@@ -198,7 +219,23 @@ void free(void* ptr) noexcept {
         return;
     }
 
+    std::lock_guard<std::mutex> guard{class_locks[class_index]};
     push_slot(class_index, static_cast<FreeSlot*>(ptr));
+}
+
+size_t malloc_usable_size(void* ptr) noexcept {
+    if (ptr == nullptr) {
+        return 0;
+    }
+
+    ChunkLabel* label = label_of(ptr);
+
+    if (label->size_class == NUM_CLASSES) {
+        char* region_end = reinterpret_cast<char*>(label) + label->length;
+        return static_cast<size_t>(region_end - static_cast<char*>(ptr));
+    }
+
+    return SIZE_CLASSES[label->size_class];
 }
 
 void* calloc(size_t count, size_t size) noexcept {
@@ -304,19 +341,4 @@ void* pvalloc(size_t size) noexcept {
     return aligned_malloc(PAGE_SIZE, rounded);
 }
 
-size_t malloc_usable_size(void* ptr) noexcept {
-    if (ptr == nullptr) {
-        return 0;
-    }
-
-    ChunkLabel* label = label_of(ptr);
-
-    if (label->size_class == NUM_CLASSES) {
-        char* region_end = reinterpret_cast<char*>(label) + label->length;
-        return static_cast<size_t>(region_end - static_cast<char*>(ptr));
-    }
-
-    return SIZE_CLASSES[label->size_class];
-}
-
-}
+} // extern "C"
