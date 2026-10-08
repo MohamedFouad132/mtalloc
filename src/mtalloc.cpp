@@ -1,4 +1,4 @@
-#include <algorithm>    // std::max
+#include <algorithm>    // std::max, std::clamp
 #include <bit>          // std::has_single_bit, std::bit_ceil
 #include <cerrno>       // errno, EINVAL, ENOMEM
 #include <cstddef>      // size_t
@@ -9,7 +9,7 @@
 #include <mutex>        // std::mutex, std::lock_guard
 
 #include <malloc.h>     // malloc_usable_size, memalign, pvalloc
-#include <pthread.h>    // pthread_atfork
+#include <pthread.h>    // pthread_atfork, pthread_once, pthread_key_create
 #include <sys/mman.h>   // mmap, munmap
 
 constexpr size_t MIN_ALIGNMENT = 16;
@@ -37,25 +37,17 @@ struct FreeSlot {
     FreeSlot* next;
 };
 
+struct ThreadCache {
+    FreeSlot* heads[NUM_CLASSES];    // this thread's private free list, per class
+    size_t counts[NUM_CLASSES];      // how many slots are in each list
+};
+
 static FreeSlot* free_lists[NUM_CLASSES];
 static std::mutex class_locks[NUM_CLASSES];
 
-static void lock_all_classes() {
-    for (std::mutex& lock : class_locks) {
-        lock.lock();
-    }
-}
-
-static void unlock_all_classes() {
-    for (std::mutex& lock : class_locks) {
-        lock.unlock();
-    }
-}
-
-__attribute__((constructor))
-static void fork_handlers() {
-    pthread_atfork(lock_all_classes, unlock_all_classes, unlock_all_classes);
-}
+static thread_local ThreadCache cache;
+static thread_local bool cache_registered;   // has this thread signed up yet?
+static pthread_key_t cache_key;              // index of our thread-exit destructor
 
 static size_t size_to_class(size_t size) {
     for (size_t class_index = 0; class_index < NUM_CLASSES; class_index++) {
@@ -64,6 +56,11 @@ static size_t size_to_class(size_t size) {
         }
     }
     return NUM_CLASSES;
+}
+
+constexpr size_t batch_size(size_t class_index) {
+    size_t slots = (16 * 1024) / SIZE_CLASSES[class_index];    // aim for about 16 KiB per batch
+    return std::clamp(slots, size_t{2}, size_t{32});            // but between 2 and 32 slots
 }
 
 static size_t round_up_to_page(size_t n) {
@@ -152,6 +149,95 @@ static bool populate_free_list(size_t class_index) {
     return true;
 }
 
+static void lock_all_classes() {
+    for (std::mutex& lock : class_locks) {
+        lock.lock();
+    }
+}
+
+static void unlock_all_classes() {
+    for (std::mutex& lock : class_locks) {
+        lock.unlock();
+    }
+}
+
+__attribute__((constructor))
+static void fork_handlers() {
+    pthread_atfork(lock_all_classes, unlock_all_classes, unlock_all_classes);
+}
+
+static void cache_push(size_t class_index, FreeSlot* slot) {
+    slot->next = cache.heads[class_index];
+    cache.heads[class_index] = slot;
+    cache.counts[class_index]++;
+}
+
+static FreeSlot* cache_pop(size_t class_index) {
+    FreeSlot* slot = cache.heads[class_index];
+    cache.heads[class_index] = slot->next;
+    cache.counts[class_index]--;
+    return slot;
+}
+
+static void drain_cache(void*) {
+    for (size_t c = 0; c < NUM_CLASSES; c++) {
+        if (cache.heads[c] == nullptr) {
+            continue;
+        }
+
+        std::lock_guard<std::mutex> guard{class_locks[c]};
+        while (cache.heads[c] != nullptr) {
+            push_slot(c, cache_pop(c));
+        }
+    }
+    cache_registered = false;
+}
+
+static void create_cache_key() {
+    pthread_key_create(&cache_key, drain_cache);
+}
+
+static void register_cache() {
+    if (cache_registered) {
+        return;
+    }
+
+    cache_registered = true;
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    pthread_once(&once, create_cache_key);
+
+    pthread_setspecific(cache_key, &cache);
+
+}
+
+static bool refill_cache(size_t class_index) {
+    register_cache();
+
+    std::lock_guard<std::mutex> guard{class_locks[class_index]};
+    if (free_lists[class_index] == nullptr) {
+        if (!populate_free_list(class_index)) {
+            return false;
+        }
+    }
+
+    size_t batch = batch_size(class_index);
+    for (size_t i = 0; i < batch && free_lists[class_index] != nullptr; i++) {
+        cache_push(class_index, pop_slot(class_index));
+    }
+
+    return true;
+}
+
+static void flush_cache(size_t class_index) {
+    std::lock_guard<std::mutex> guard{class_locks[class_index]};
+
+    size_t batch = batch_size(class_index);
+    for (size_t i = 0; i < batch && cache.heads[class_index] != nullptr; i++) {
+        FreeSlot* slot = cache_pop(class_index);
+        push_slot(class_index, slot);
+    }
+}
+
 static void* malloc_large(size_t size, size_t offset) {
     if (size > std::numeric_limits<size_t>::max() - (offset + PAGE_SIZE + CHUNK_SIZE)) {
         errno = ENOMEM;
@@ -196,14 +282,13 @@ void* malloc(size_t size) noexcept {
         return malloc_large(size, sizeof(ChunkLabel));
     }
 
-    std::lock_guard<std::mutex> guard{class_locks[class_index]};
-    if (free_lists[class_index] == nullptr) {
-        if (!populate_free_list(class_index)) {
+    if (cache.heads[class_index] == nullptr) {
+        if (!refill_cache(class_index)) {
             return nullptr;
         }
     }
 
-    return pop_slot(class_index);
+    return cache_pop(class_index);
 }
 
 void free(void* ptr) noexcept {
@@ -219,8 +304,12 @@ void free(void* ptr) noexcept {
         return;
     }
 
-    std::lock_guard<std::mutex> guard{class_locks[class_index]};
-    push_slot(class_index, static_cast<FreeSlot*>(ptr));
+    register_cache();
+    cache_push(class_index, static_cast<FreeSlot*>(ptr));
+
+    if (cache.counts[class_index] > 2 * batch_size(class_index)) {
+        flush_cache(class_index);
+    }
 }
 
 size_t malloc_usable_size(void* ptr) noexcept {
