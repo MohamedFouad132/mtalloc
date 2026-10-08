@@ -180,14 +180,14 @@ static FreeSlot* cache_pop(size_t class_index) {
 }
 
 static void drain_cache(void*) {
-    for (size_t c = 0; c < NUM_CLASSES; c++) {
-        if (cache.heads[c] == nullptr) {
+    for (size_t class_index = 0; class_index < NUM_CLASSES; class_index++) {
+        if (cache.heads[class_index] == nullptr) {
             continue;
         }
 
-        std::lock_guard<std::mutex> guard{class_locks[c]};
-        while (cache.heads[c] != nullptr) {
-            push_slot(c, cache_pop(c));
+        std::lock_guard<std::mutex> guard{class_locks[class_index]};
+        while (cache.heads[class_index] != nullptr) {
+            push_slot(class_index, cache_pop(class_index));
         }
     }
     cache_registered = false;
@@ -207,7 +207,6 @@ static void register_cache() {
     pthread_once(&once, create_cache_key);
 
     pthread_setspecific(cache_key, &cache);
-
 }
 
 static bool refill_cache(size_t class_index) {
@@ -233,8 +232,7 @@ static void flush_cache(size_t class_index) {
 
     size_t batch = batch_size(class_index);
     for (size_t i = 0; i < batch && cache.heads[class_index] != nullptr; i++) {
-        FreeSlot* slot = cache_pop(class_index);
-        push_slot(class_index, slot);
+        push_slot(class_index, cache_pop(class_index));
     }
 }
 
