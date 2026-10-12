@@ -135,16 +135,16 @@ MTALLOC_API void* memalign(size_t alignment, size_t size) noexcept {
 }
 
 MTALLOC_API void* valloc(size_t size) noexcept {
-    return mtalloc::allocate(size, mtalloc::PAGE_SIZE);
+    return mtalloc::allocate(size, mtalloc::page_size());
 }
 
-// valloc + size is rounded up to a multiple of PAGE_SIZE.
+// valloc + size is rounded up to a multiple of page size.
 MTALLOC_API void* pvalloc(size_t size) noexcept {
-    if (size > SIZE_MAX - mtalloc::PAGE_SIZE) {
+    if (size > SIZE_MAX - mtalloc::page_size()) {
         errno = ENOMEM;
         return nullptr;
     }
-    return mtalloc::allocate(mtalloc::round_up_to_page(size), mtalloc::PAGE_SIZE);
+    return mtalloc::allocate(mtalloc::round_up_to_page(size), mtalloc::page_size());
 }
 
 }  // extern "C"

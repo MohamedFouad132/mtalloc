@@ -1,3 +1,5 @@
+// large.cpp: allocations too big for a size class
+
 #include "shared.h"
 
 #include <cerrno>       // errno, ENOMEM
@@ -13,7 +15,7 @@ void* large_alloc(size_t size, size_t alignment) {
 
     size_t offset = std::max(alignment, sizeof(ChunkHeader));
 
-    if (size > SIZE_MAX - offset - PAGE_SIZE) {
+    if (size > SIZE_MAX - offset - page_size()) {
         errno = ENOMEM;
         return nullptr;
     }

@@ -3,17 +3,17 @@
 // Marks a public function as exported (everything else is hidden by -fvisibility=hidden)
 #define MTALLOC_API __attribute__((visibility("default")))
 
-   #include <algorithm>    // std::clamp
-   #include <bit>          // std::has_single_bit
-   #include <cstddef>      // size_t
-   #include <cstdint>      // uintptr_t, SIZE_MAX
+#include <algorithm>    // std::clamp
+#include <bit>          // std::has_single_bit
+#include <cstddef>      // size_t
+#include <cstdint>      // uintptr_t, SIZE_MAX
+#include <unistd.h>     // sysconf
 
 namespace mtalloc {
 
 inline constexpr size_t MIN_ALIGNMENT = 16;
-inline constexpr size_t PAGE_SIZE     = 4 * 1024;     // 4 KiB
 inline constexpr size_t CHUNK_SIZE    = 64 * 1024;    // 64 KiB
-inline constexpr size_t BATCH_SIZE    = 16 * 1024;       // 16 KiB
+inline constexpr size_t BATCH_SIZE    = 16 * 1024;    // 16 KiB
 inline constexpr uintptr_t CHUNK_MASK = static_cast<uintptr_t>(CHUNK_SIZE) - 1;
 
 inline constexpr size_t NUM_CLASSES = 32;
@@ -40,6 +40,10 @@ struct FreeSlot {
     FreeSlot* next;
 };
 
+inline size_t page_size() {
+    static const size_t size = sysconf(_SC_PAGESIZE);
+    return size;
+}
 
 constexpr size_t class_alignment(size_t class_index) {
     size_t slot_size = SIZE_CLASSES[class_index];
@@ -65,7 +69,7 @@ constexpr size_t batch_size(size_t class_index) {
 }
 
 inline size_t round_up_to_page(size_t n) {
-    return (n + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    return (n + page_size() - 1) & ~(page_size() - 1);
 }
 
 inline bool multiply_overflows(size_t count, size_t size) {
