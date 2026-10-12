@@ -4,6 +4,21 @@
 
 namespace mtalloc {
 
+#ifdef MTALLOC_NO_CACHE
+// For benchmarking without a thread cache
+
+void* cache_alloc(size_t class_index) {
+    size_t taken;
+    return central_take(class_index, 1, taken);
+}
+
+void cache_free(size_t class_index, void* ptr) {
+    FreeSlot* slot = static_cast<FreeSlot*>(ptr);
+    central_return(class_index, slot, slot);
+}
+
+#else
+
 struct ThreadCache {
     FreeSlot* heads[NUM_CLASSES];
     size_t counts[NUM_CLASSES];
@@ -98,5 +113,7 @@ void cache_free(size_t class_index, void* ptr) {
         return_batch(class_index);
     }
 }
+
+#endif  // MTALLOC_NO_CACHE
 
 }  // namespace mtalloc
