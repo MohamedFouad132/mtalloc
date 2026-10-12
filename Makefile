@@ -7,7 +7,7 @@ SRCS = $(wildcard src/*.cpp)
 libmtalloc.so: $(SRCS) src/shared.h
 	$(CXX) $(CXXFLAGS) -fPIC -shared -fvisibility=hidden -flto -o $@ $(SRCS)
 
-// build without thread caches
+# build without thread caches
 libmtalloc_nocache.so: $(SRCS) src/shared.h
 	$(CXX) $(CXXFLAGS) -DMTALLOC_NO_CACHE -fPIC -shared -fvisibility=hidden -flto -o $@ $(SRCS)
 
