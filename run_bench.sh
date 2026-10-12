@@ -8,7 +8,7 @@ RUNS=${RUNS:-5}
 THREADS=(1 2 4 8 16)
 ALLOCATORS=(glibc mtalloc nocache)
 LIBS=("" "$(pwd)/libmtalloc.so" "$(pwd)/libmtalloc_nocache.so")
-OUT=results/throughput.csv
+OUT=results/benchmark.csv
 
 make
 make libmtalloc_nocache.so
