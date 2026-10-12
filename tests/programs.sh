@@ -39,7 +39,7 @@ for t in threads:
 assert subprocess.run(["echo", "hi"], capture_output=True).stdout == b"hi\n"
 '
 
-echo "real programs:"
+echo "programs:"
 
 run "ls"     ls -laR /usr/include
 run "python" python3 -c "$PYTHON_WORKLOAD"
