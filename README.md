@@ -16,6 +16,7 @@ mtalloc/
 ├── run_tests.sh
 ├── run_bench.sh
 ├── .gitignore
+├── .gitattributes
 ├── LICENSE
 ├── README.md
 ├── src/
